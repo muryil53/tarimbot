@@ -1,6 +1,5 @@
-# tarimbot v1.1
+# tarimbot v1.2
 import os
-import json
 import base64
 import httpx
 from flask import Flask, request, jsonify
@@ -9,10 +8,10 @@ import anthropic
 app = Flask(__name__)
 
 # ── AYARLAR ──────────────────────────────────────────
-WHATSAPP_TOKEN   = os.environ.get("WHATSAPP_TOKEN")
-ANTHROPIC_KEY    = os.environ.get("ANTHROPIC_KEY")
-PHONE_NUMBER_ID  = "977054132153285"
-VERIFY_TOKEN     = "tarimbot2024"
+WHATSAPP_TOKEN  = os.environ.get("WHATSAPP_TOKEN")
+ANTHROPIC_KEY   = os.environ.get("ANTHROPIC_KEY")
+PHONE_NUMBER_ID = "977054132153285"
+VERIFY_TOKEN    = "tarimbot2024"
 
 anthropic_client = anthropic.Anthropic(api_key=ANTHROPIC_KEY)
 
@@ -54,7 +53,8 @@ def mesaj_gonder(telefon, metin):
         "type": "text",
         "text": {"body": metin}
     }
-    httpx.post(url, headers=headers, json=veri)
+    r = httpx.post(url, headers=headers, json=veri)
+    print(f"WA yanit: {r.status_code} {r.text}")
 
 # ── WHATSAPP GÖRSEL İNDİR ────────────────────────────
 def gorsel_indir(media_id):
@@ -68,7 +68,6 @@ def gorsel_indir(media_id):
 # ── CLAUDE'A SOR ─────────────────────────────────────
 def claude_sor(metin=None, gorsel_b64=None, mime="image/jpeg"):
     mesajlar = []
-
     if gorsel_b64:
         icerik = [
             {
@@ -96,7 +95,7 @@ def claude_sor(metin=None, gorsel_b64=None, mime="image/jpeg"):
     )
     return yanit.content[0].text
 
-# ── WEBHOOK ──────────────────────────────────────────
+# ── WEBHOOK DOĞRULA ──────────────────────────────────
 @app.route("/webhook", methods=["GET"])
 def webhook_dogrula():
     mode      = request.args.get("hub.mode")
@@ -106,9 +105,12 @@ def webhook_dogrula():
         return challenge, 200
     return "Hata", 403
 
+# ── WEBHOOK AL ───────────────────────────────────────
 @app.route("/webhook", methods=["POST"])
 def webhook_al():
     veri = request.get_json()
+    print(f"Gelen veri: {veri}")
+    telefon = None
     try:
         entry    = veri["entry"][0]
         degisim  = entry["changes"][0]["value"]
@@ -117,10 +119,12 @@ def webhook_al():
         for mesaj in mesajlar:
             telefon = mesaj["from"]
             tur     = mesaj["type"]
+            print(f"Mesaj tipi: {tur}, telefon: {telefon}")
 
             if tur == "text":
-                soru   = mesaj["text"]["body"]
-                yanit  = claude_sor(metin=soru)
+                soru  = mesaj["text"]["body"]
+                print(f"Soru: {soru}")
+                yanit = claude_sor(metin=soru)
                 mesaj_gonder(telefon, yanit)
 
             elif tur in ["image", "document"]:
@@ -132,13 +136,18 @@ def webhook_al():
                 mesaj_gonder(telefon, yanit)
 
     except Exception as e:
-        print(f"Hata: {e}")
+        print(f"HATA: {e}")
+        import traceback
+        traceback.print_exc()
+        if telefon:
+            try:
+                mesaj_gonder(telefon, f"Sistem hatası: {str(e)}")
+            except:
+                pass
 
     return jsonify({"status": "ok"}), 200
 
-# ── ÇALIŞTIR ─────────────────────────────────────────
+# ── SAĞLIK KONTROLÜ ──────────────────────────────────
 @app.route("/", methods=["GET"])
 def health():
     return "OK", 200
-    port = int(os.environ.get("PORT", 8080))
-    app.run(host="0.0.0.0", port=port)
