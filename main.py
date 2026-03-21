@@ -136,6 +136,8 @@ def webhook_al():
     return jsonify({"status": "ok"}), 200
 
 # ── ÇALIŞTIR ─────────────────────────────────────────
-if __name__ == "__main__":
+@app.route("/", methods=["GET"])
+def health():
+    return "OK", 200
     port = int(os.environ.get("PORT", 8080))
     app.run(host="0.0.0.0", port=port)
