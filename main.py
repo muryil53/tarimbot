@@ -10,7 +10,7 @@ app = Flask(__name__)
 # ── AYARLAR ──────────────────────────────────────────
 WHATSAPP_TOKEN  = os.environ.get("WHATSAPP_TOKEN")
 ANTHROPIC_KEY   = os.environ.get("ANTHROPIC_KEY")
-PHONE_NUMBER_ID = os.environ.get("PHONE_NUMBER_ID", "1012563831945565")
+PHONE_NUMBER_ID = "1012563831945565"
 VERIFY_TOKEN    = "abc123"
 
 anthropic_client = anthropic.Anthropic(api_key=ANTHROPIC_KEY)
