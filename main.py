@@ -10,8 +10,8 @@ app = Flask(__name__)
 # ── AYARLAR ──────────────────────────────────────────
 WHATSAPP_TOKEN  = os.environ.get("WHATSAPP_TOKEN")
 ANTHROPIC_KEY   = os.environ.get("ANTHROPIC_KEY")
-PHONE_NUMBER_ID = "977054132153285"
-VERIFY_TOKEN    = "tarimbot2024"
+PHONE_NUMBER_ID = os.environ.get("PHONE_NUMBER_ID", "977054132153285")
+VERIFY_TOKEN    = "abc123"
 
 anthropic_client = anthropic.Anthropic(api_key=ANTHROPIC_KEY)
 
@@ -151,3 +151,7 @@ def webhook_al():
 @app.route("/", methods=["GET"])
 def health():
     return "OK", 200
+
+if __name__ == "__main__":
+    port = int(os.environ.get("PORT", 5000))
+    app.run(host="0.0.0.0", port=port, debug=True)
