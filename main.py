@@ -1,4 +1,4 @@
-# tarimbot v1.2
+# tarimbot v1.3
 import os
 import base64
 import httpx
@@ -10,10 +10,17 @@ app = Flask(__name__)
 # ── AYARLAR ──────────────────────────────────────────
 WHATSAPP_TOKEN  = os.environ.get("WHATSAPP_TOKEN")
 ANTHROPIC_KEY   = os.environ.get("ANTHROPIC_KEY")
-PHONE_NUMBER_ID = "977054132153285"
-VERIFY_TOKEN    = "abc123"
+PHONE_NUMBER_ID = os.environ.get("PHONE_NUMBER_ID", "977054132153285")
+VERIFY_TOKEN    = "tarimbot2024"
 
 anthropic_client = anthropic.Anthropic(api_key=ANTHROPIC_KEY)
+
+# ── KATEGORİ PROMPTLARI ──────────────────────────────
+KATEGORI_PROMPTLARI = {
+    "toprak": "Kullanıcı TOPRAK ISLAHE hakkında soru soruyor. Toprak pH, tuzluluk, organik madde, drenaj konularına odaklan.",
+    "besleme": "Kullanıcı BİTKİ BESLEME hakkında soru soruyor. NPK değerleri, gübre önerileri, besin eksiklikleri konularına odaklan.",
+    "hastalik": "Kullanıcı HASTALIK & ZARARLI hakkında soru soruyor. Hastalık teşhisi, ilaç önerileri, önleyici tedbirler konularına odaklan.",
+}
 
 # ── SİSTEM PROMPTU ───────────────────────────────────
 SISTEM = """Sen Türkiye'nin en deneyimli örtüaltı tarım danışmanısın.
@@ -39,6 +46,46 @@ Cevap formatı:
 ✅ Öneri: (ne yapılmalı)
 💊 Ürün: (varsa spesifik öneri)
 """
+
+# ── KULLANICI KATEGORİ DURUMU (ileride DB'ye taşınır) ─
+kullanici_kategorisi = {}
+
+# ── WHATSAPP BUTON MENÜSÜ GÖNDER ─────────────────────
+def menu_gonder(telefon):
+    url = f"https://graph.facebook.com/v18.0/{PHONE_NUMBER_ID}/messages"
+    headers = {
+        "Authorization": f"Bearer {WHATSAPP_TOKEN}",
+        "Content-Type": "application/json"
+    }
+    veri = {
+        "messaging_product": "whatsapp",
+        "to": telefon,
+        "type": "interactive",
+        "interactive": {
+            "type": "button",
+            "body": {
+                "text": "🌱 TarimBot\n\nNe hakkında yardım istiyorsunuz?"
+            },
+            "action": {
+                "buttons": [
+                    {
+                        "type": "reply",
+                        "reply": {"id": "toprak", "title": "🌱 Toprak Islahı"}
+                    },
+                    {
+                        "type": "reply",
+                        "reply": {"id": "besleme", "title": "💊 Bitki Besleme"}
+                    },
+                    {
+                        "type": "reply",
+                        "reply": {"id": "hastalik", "title": "🦠 Hastalık & Zararlı"}
+                    }
+                ]
+            }
+        }
+    }
+    r = httpx.post(url, headers=headers, json=veri)
+    print(f"Menü: {r.status_code} {r.text}")
 
 # ── WHATSAPP MESAJ GÖNDER ────────────────────────────
 def mesaj_gonder(telefon, metin):
@@ -66,7 +113,11 @@ def gorsel_indir(media_id):
     return base64.b64encode(r2.content).decode("utf-8")
 
 # ── CLAUDE'A SOR ─────────────────────────────────────
-def claude_sor(metin=None, gorsel_b64=None, mime="image/jpeg"):
+def claude_sor(metin=None, gorsel_b64=None, mime="image/jpeg", kategori=None):
+    sistem = SISTEM
+    if kategori and kategori in KATEGORI_PROMPTLARI:
+        sistem = SISTEM + f"\n\nÖNEMLİ: {KATEGORI_PROMPTLARI[kategori]}"
+
     mesajlar = []
     if gorsel_b64:
         icerik = [
@@ -90,7 +141,7 @@ def claude_sor(metin=None, gorsel_b64=None, mime="image/jpeg"):
     yanit = anthropic_client.messages.create(
         model="claude-sonnet-4-20250514",
         max_tokens=1000,
-        system=SISTEM,
+        system=sistem,
         messages=mesajlar
     )
     return yanit.content[0].text
@@ -119,21 +170,37 @@ def webhook_al():
         for mesaj in mesajlar:
             telefon = mesaj["from"]
             tur     = mesaj["type"]
-            print(f"Mesaj tipi: {tur}, telefon: {telefon}")
+            print(f"Tip: {tur}, Tel: {telefon}")
 
-            if tur == "text":
-                soru  = mesaj["text"]["body"]
-                print(f"Soru: {soru}")
-                yanit = claude_sor(metin=soru)
-                mesaj_gonder(telefon, yanit)
+            # ── BUTON CEVABI ──
+            if tur == "interactive":
+                buton_id     = mesaj["interactive"]["button_reply"]["id"]
+                buton_baslik = mesaj["interactive"]["button_reply"]["title"]
+                kullanici_kategorisi[telefon] = buton_id
+                mesaj_gonder(telefon, f"{buton_baslik} seçtiniz.\n\nSorunuzu yazın veya görsel gönderin 👇")
 
+            # ── METİN MESAJI ──
+            elif tur == "text":
+                soru = mesaj["text"]["body"].strip().lower()
+
+                if soru in ["merhaba", "menü", "menu", "başla", "hi", "selam", "."]:
+                    menu_gonder(telefon)
+                else:
+                    kategori = kullanici_kategorisi.get(telefon)
+                    yanit    = claude_sor(metin=mesaj["text"]["body"], kategori=kategori)
+                    mesaj_gonder(telefon, yanit)
+                    menu_gonder(telefon)
+
+            # ── GÖRSEL / DOKÜMAN ──
             elif tur in ["image", "document"]:
                 media_id  = mesaj[tur]["id"]
                 mime_type = mesaj[tur].get("mime_type", "image/jpeg")
                 caption   = mesaj[tur].get("caption", "")
+                kategori  = kullanici_kategorisi.get(telefon)
                 gorsel    = gorsel_indir(media_id)
-                yanit     = claude_sor(metin=caption or None, gorsel_b64=gorsel, mime=mime_type)
+                yanit     = claude_sor(metin=caption or None, gorsel_b64=gorsel, mime=mime_type, kategori=kategori)
                 mesaj_gonder(telefon, yanit)
+                menu_gonder(telefon)
 
     except Exception as e:
         print(f"HATA: {e}")
@@ -152,6 +219,6 @@ def webhook_al():
 def health():
     return "OK", 200
 
+# ── ÇALIŞTIR ─────────────────────────────────────────
 if __name__ == "__main__":
-    port = int(os.environ.get("PORT", 5000))
-    app.run(host="0.0.0.0", port=port, debug=True)
+    app.run(host="0.0.0.0", port=5000, debug=True)
